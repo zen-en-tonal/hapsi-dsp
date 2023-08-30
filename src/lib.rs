@@ -1,6 +1,6 @@
+pub mod chord_detect;
 pub mod chromagram;
 pub mod frequency;
-pub mod scale_detector;
 pub mod spectrum;
 
 pub fn add(left: usize, right: usize) -> usize {

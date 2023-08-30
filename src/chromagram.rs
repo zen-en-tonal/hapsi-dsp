@@ -1,6 +1,9 @@
-use hapsi::prelude::{ChromaLike, ToneLike};
+use hapsi::prelude::Octave;
 use itertools::Itertools;
-use std::collections::HashMap;
+use std::{
+    collections::{hash_map::Iter, HashMap},
+    hash::Hash,
+};
 
 use crate::{frequency::freq, spectrum::Magnitude};
 
@@ -35,84 +38,38 @@ impl ChromagramFactory {
         }
     }
 
-    pub fn create<T, Item>(&self, magnitude: &Magnitude, chroma: &T) -> Chromagram<Item>
+    pub fn create<T: Octave>(&self, magnitude: &Magnitude, chroma: &T) -> Chromagram<T::PitchClass>
     where
-        T: ChromaLike<Tone = Item>,
-        Item: Eq + std::hash::Hash + hapsi::core::ToneLike,
+        T::PitchClass: Eq + Hash + Clone + Copy,
     {
-        let mut chroma_map = HashMap::<Item, f32>::new();
-        let tones = chroma.tones_with_start(&chroma.tone(0));
-        for tone in tones {
-            let oct_sum = self.oct_sum(magnitude, &tone);
-            chroma_map.insert(tone, oct_sum);
-        }
-        Chromagram(chroma_map)
-    }
+        let mut chroma_map = HashMap::<T::PitchClass, f32>::new();
+        let tones = chroma.iter();
+        for note in tones {
+            let mut oct_sum = f32::default();
 
-    fn oct_sum<Item>(&self, magnitude: &Magnitude, tone: &Item) -> f32
-    where
-        Item: PartialEq + std::hash::Hash + hapsi::core::ToneLike,
-    {
-        let mut oct_sum = f32::default();
-        for oct in 1..=self.num_oct {
-            let harmonic_sum = self.harm_sum(magnitude, tone, oct);
-            oct_sum += harmonic_sum;
-        }
-        oct_sum
-    }
+            for oct in 1..=self.num_oct {
+                let mut harmonic_sum = f32::default();
 
-    fn harm_sum<Item>(&self, magnitude: &Magnitude, tone: &Item, oct: usize) -> f32
-    where
-        Item: PartialEq + std::hash::Hash + hapsi::core::ToneLike,
-    {
-        let mut harmonic_sum = f32::default();
-        for harmonic in 1..=self.num_harmonic {
-            let max = self.harmonic_bin(magnitude, tone, oct, harmonic);
-            harmonic_sum += max / harmonic as f32;
-        }
-        harmonic_sum
-    }
-
-    fn harmonic_bin<Item>(
-        &self,
-        magnitude: &Magnitude,
-        tone: &Item,
-        oct: usize,
-        harmonic: usize,
-    ) -> f32
-    where
-        Item: PartialEq + std::hash::Hash + hapsi::core::ToneLike,
-    {
-        let (min_bin, max_bin) = self.bin_range(
-            magnitude.sample_rate(),
-            magnitude.inner().len(),
-            tone,
-            oct,
-            harmonic,
-        );
-        let mut max = f32::default();
-        for i in min_bin..max_bin {
-            if magnitude.inner()[i] > max {
-                max = magnitude.inner()[i];
+                for harmonic in 1..=self.num_harmonic {
+                    let divider = magnitude.sample_rate() / magnitude.inner().len() as f32;
+                    let freq = freq(chroma, note, self.ref_freq);
+                    let center_bin =
+                        (freq * oct as f32 * harmonic as f32 / divider).round() as usize;
+                    let min_bin = center_bin - (self.r * harmonic);
+                    let max_bin = center_bin + (self.r * harmonic);
+                    let mut max = f32::default();
+                    for i in min_bin..max_bin {
+                        if magnitude.inner()[i] > max {
+                            max = magnitude.inner()[i];
+                        }
+                    }
+                    harmonic_sum += max / harmonic as f32;
+                }
+                oct_sum += harmonic_sum;
             }
+            chroma_map.insert(note.clone(), oct_sum);
         }
-        max
-    }
-
-    fn bin_range<Item: ToneLike>(
-        &self,
-        sample_rate: f32,
-        len: usize,
-        tone: &Item,
-        oct: usize,
-        harmonic: usize,
-    ) -> (usize, usize) {
-        let freq_par_sample = sample_rate / len as f32;
-        let freq = freq(tone, self.ref_freq) * oct as f32 * harmonic as f32;
-        let center_bin = (freq / freq_par_sample).round() as usize;
-        let min_bin = center_bin - (self.r * harmonic);
-        let max_bin = center_bin + (self.r * harmonic);
-        (min_bin, max_bin)
+        Chromagram::new(chroma_map)
     }
 }
 
@@ -135,5 +92,9 @@ impl<T: Copy> Chromagram<T> {
             .map(|x| x.0)
             .take(k)
             .collect()
+    }
+
+    pub fn iter(&self) -> Iter<'_, T, f32> {
+        self.0.iter()
     }
 }
